@@ -201,9 +201,17 @@ python preprocessed_data/d1_experiment2.py
    python preprocessed_data/d1_experiment2.py
    ```
 
+6. 학습된 모델 저장 (SVM/RF, GRU)  
+   ```bash
+   python save_models.py
+   ```
+   - 저장 위치: `models/`  
+     - `ml_svm.pkl`, `ml_rf.pkl` : 1st(quality=0)로 학습한 SVM/RF  
+     - `dl1_gru_first.pt`       : 1st(quality=0)로 학습한 GRU  
+     - `dl2_gru_aug.pt`         : 증강 데이터(있으면) 또는 전체 데이터로 학습한 GRU
+
 이 구조를 기반으로, 보고서에서는
 1) 데이터 분석 및 전처리,  
 2) 전통적인 ML의 장점과 한계,  
 3) 시퀀스 인지 딥러닝 + 데이터 증강 설계와 결과  
 를 순서대로 정리하면 된다.
-
