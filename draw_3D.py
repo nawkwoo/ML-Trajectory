@@ -3,7 +3,7 @@ from mpl_toolkits.mplot3d import Axes3D
 
 xs, ys, zs = [], [], []
 
-with open("/Users/kimminseong/Desktop/UNIV/UNIV 3-2/기계학습/dataset/machine_learning1/vertical/4.txt", "r") as f:
+with open("/Users/kimminseong/Desktop/UNIV/UNIV 3-2/기계학습/dataset/ML-Trajectory/Data/Mach", "r") as f:
     for line in f:
         line = line.strip()
         if not line:
