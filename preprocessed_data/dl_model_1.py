@@ -1,14 +1,14 @@
 import os
+
 import numpy as np
 from sklearn.model_selection import KFold
 import torch
 from torch import nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 
 class TrajectoryDataset(Dataset):
     def __init__(self, X: np.ndarray, y: np.ndarray):
-        # X: (N, T, 3), y: (N,)
         self.X = torch.from_numpy(X).float()
         self.y = torch.from_numpy(y).long()
 
@@ -31,28 +31,39 @@ class GRUClassifier(nn.Module):
         self.fc = nn.Linear(hidden_size, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (batch, seq_len, input_size)
         out, _ = self.gru(x)
         last_hidden = out[:, -1, :]  # (batch, hidden)
-        logits = self.fc(last_hidden)
-        return logits
+        return self.fc(last_hidden)
 
 
-def train_one_fold(
+def load_data():
+    data_dir = "augmented_data"
+    if not os.path.exists(os.path.join(data_dir, "X.npy")):
+        raise FileNotFoundError("augmented_data/X.npy not found. Run `python augment_data.py` first.")
+    print(f"Using data from '{data_dir}'")
+    X = np.load(os.path.join(data_dir, "X.npy"))
+    y = np.load(os.path.join(data_dir, "y.npy"))
+    q = np.load(os.path.join(data_dir, "quality.npy"))
+    return X, y, q
+
+
+def train_model(
     model: nn.Module,
     train_loader: DataLoader,
     val_loader: DataLoader,
     device: torch.device,
-    num_epochs: int = 60,
+    num_epochs: int = 80,
     lr: float = 1e-3,
+    log_prefix: str = "",
 ) -> float:
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-
     model.to(device)
 
     for epoch in range(1, num_epochs + 1):
         model.train()
+        running_loss = 0.0
+
         for xb, yb in train_loader:
             xb = xb.to(device)
             yb = yb.to(device)
@@ -63,7 +74,11 @@ def train_one_fold(
             loss.backward()
             optimizer.step()
 
-        if epoch % 20 == 0 or epoch == 1:
+            running_loss += loss.item() * xb.size(0)
+
+        epoch_loss = running_loss / len(train_loader.dataset)
+
+        if epoch % 10 == 0 or epoch == 1:
             model.eval()
             correct = 0
             total = 0
@@ -75,8 +90,9 @@ def train_one_fold(
                     preds = logits.argmax(dim=1)
                     correct += (preds == yb).sum().item()
                     total += yb.size(0)
+
             acc = correct / total if total > 0 else 0.0
-            print(f"  Epoch {epoch:03d} | val_acc={acc:.3f}")
+            print(f"{log_prefix}Epoch {epoch:03d} | loss={epoch_loss:.4f} | val_acc={acc:.3f}")
 
     # final validation accuracy
     model.eval()
@@ -94,62 +110,77 @@ def train_one_fold(
 
 
 def main():
-    # Seed for reproducibility
-    np.random.seed(0)
-    torch.manual_seed(0)
+    X, y, q = load_data()  # X: (N, 100, 3)
 
-    # Load dataset: augmented_data가 있으면 우선 사용, 없으면 preprocessed_data 사용
-    data_dir = "augmented_data"
-    if not os.path.exists(os.path.join(data_dir, "X.npy")):
-        data_dir = "preprocessed_data"
-
-    print(f"Using data from '{data_dir}'")
-    X = np.load(os.path.join(data_dir, "X.npy"))  # (N, 100, 3)
-    y = np.load(os.path.join(data_dir, "y.npy"))  # (N,)
-
-    # 채널 단위 표준화 (전체 데이터 기준)
+    # 채널 정규화
     mean = X.mean(axis=(0, 1), keepdims=True)
     std = X.std(axis=(0, 1), keepdims=True) + 1e-6
     X_norm = (X - mean) / std
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # 1) 동일 분포 5-fold 교차검증 (내부 품질 체크)
     kf = KFold(n_splits=5, shuffle=True, random_state=0)
-    fold_accuracies: list[float] = []
-
+    fold_accs: list[float] = []
     num_classes = int(y.max()) + 1
+    for fold_idx, (tr, va) in enumerate(kf.split(X_norm), start=1):
+        X_tr, y_tr = X_norm[tr], y[tr]
+        X_va, y_va = X_norm[va], y[va]
 
-    for fold_idx, (train_idx, val_idx) in enumerate(kf.split(X_norm), start=1):
-        print(f"\n=== Fold {fold_idx} ===")
-        X_train, y_train = X_norm[train_idx], y[train_idx]
-        X_val, y_val = X_norm[val_idx], y[val_idx]
-
-        train_dataset = TrajectoryDataset(X_train, y_train)
-        val_dataset = TrajectoryDataset(X_val, y_val)
-
+        train_dataset = TrajectoryDataset(X_tr, y_tr)
+        val_dataset = TrajectoryDataset(X_va, y_va)
         train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False)
 
         model = GRUClassifier(input_size=3, hidden_size=32, num_classes=num_classes)
-
-        acc = train_one_fold(
-            model=model,
-            train_loader=train_loader,
-            val_loader=val_loader,
+        acc = train_model(
+            model,
+            train_loader,
+            val_loader,
             device=device,
-            num_epochs=60,
+            num_epochs=40,
             lr=1e-3,
+            log_prefix=f"[Fold {fold_idx}] ",
         )
-        print(f"Fold {fold_idx} final val_acc={acc:.3f}")
-        fold_accuracies.append(acc)
+        print(f"[Fold {fold_idx}] final val_acc={acc:.3f}")
+        fold_accs.append(acc)
 
-    mean_acc = float(np.mean(fold_accuracies))
-    std_acc = float(np.std(fold_accuracies))
-    print("\n=== 5-fold cross-validation result ===")
-    print("Fold accuracies:", [round(a, 3) for a in fold_accuracies])
-    print(f"Mean accuracy: {mean_acc:.3f} ± {std_acc:.3f}")
+    print("\n=== 5-fold (same distribution) ===")
+    print("Fold accuracies:", [round(a, 3) for a in fold_accs])
+    print(f"Mean acc={np.mean(fold_accs):.3f} ± {np.std(fold_accs):.3f}")
+
+    # 2) 1st train -> 2nd test (분포 외 일반화 평가)
+    train_mask = q == 0
+    test_mask = q == 1
+    X_train, y_train = X_norm[train_mask], y[train_mask]
+    X_test, y_test = X_norm[test_mask], y[test_mask]
+
+    print("\n=== 1st train -> 2nd test ===")
+    print("Train size:", X_train.shape[0], "Test size:", X_test.shape[0])
+
+    train_dataset = TrajectoryDataset(X_train, y_train)
+    test_dataset = TrajectoryDataset(X_test, y_test)
+
+    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False)
+
+    model = GRUClassifier(input_size=3, hidden_size=32, num_classes=num_classes)
+    acc = train_model(
+        model,
+        train_loader,
+        test_loader,
+        device=device,
+        num_epochs=80,
+        lr=1e-3,
+        log_prefix="",
+    )
+    print(f"Final test_acc={acc:.3f}")
+
+    # save checkpoint (1st로 학습한 모델)
+    os.makedirs("models", exist_ok=True)
+    torch.save(model.state_dict(), os.path.join("models", "dl_model_1.pt"))
+    print("Saved models/dl_model_1.pt")
 
 
 if __name__ == "__main__":
     main()
-
