@@ -1,4 +1,4 @@
-"""PCA-aligned horizontal trajectories and feature analysis (kwanwoo-style)."""
+"""PCA-aligned horizontal trajectories and feature analysis."""
 
 from __future__ import annotations
 
