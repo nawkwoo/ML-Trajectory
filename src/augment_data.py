@@ -170,7 +170,7 @@ def build_augmented_dataset(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build augmented trajectories from preprocessed_data",
+        description="Build augmented trajectories from results/preprocessed_data",
     )
     parser.add_argument(
         "--quality-filter",
@@ -204,9 +204,13 @@ def main() -> None:
     np.random.seed(0)
     random.seed(0)
 
-    X = np.load(os.path.join("preprocessed_data", "X.npy"))
-    y = np.load(os.path.join("preprocessed_data", "y.npy"))
-    quality = np.load(os.path.join("preprocessed_data", "quality.npy"))
+    base_dir = os.path.join("results", "preprocessed_data")
+    if not os.path.exists(os.path.join(base_dir, "X.npy")):
+        raise FileNotFoundError("results/preprocessed_data/X.npy not found. Run `python src/preprocess.py` first.")
+
+    X = np.load(os.path.join(base_dir, "X.npy"))
+    y = np.load(os.path.join(base_dir, "y.npy"))
+    quality = np.load(os.path.join(base_dir, "quality.npy"))
 
     print("Original dataset:", X.shape, y.shape, quality.shape)
     target_desc = "all (1st + 2nd)" if quality_filter is None else f"quality={quality_filter}"
@@ -224,7 +228,7 @@ def main() -> None:
 
     print("Augmented dataset:", X_aug.shape, y_aug.shape, q_aug.shape)
 
-    out_dir = "augmented_data"
+    out_dir = os.path.join("results", "augmented_data")
     os.makedirs(out_dir, exist_ok=True)
 
     np.save(os.path.join(out_dir, "X.npy"), X_aug)

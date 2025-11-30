@@ -215,11 +215,11 @@ if __name__ == "__main__":
         data_root="Data",
         labels=LABELS,
         target_len=100,
-        save_dir="preprocessed_data",
+        save_dir=os.path.join("results", "preprocessed_data"),
         split="both",
         include_quality=True,
     )
-    print("Saved preprocessed dataset to 'preprocessed_data'")
+    print("Saved preprocessed dataset to 'results/preprocessed_data'")
     print("X shape:", X.shape)
     print("y shape:", y.shape)
     print("quality shape:", q.shape)

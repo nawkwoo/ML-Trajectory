@@ -11,9 +11,9 @@ from sklearn.svm import SVC
 
 
 def load_data():
-    data_dir = "augmented_data"
+    data_dir = os.path.join("results", "augmented_data")
     if not os.path.exists(os.path.join(data_dir, "X.npy")):
-        raise FileNotFoundError("augmented_data/X.npy not found. Run `python augment_data.py` first.")
+        raise FileNotFoundError("results/augmented_data/X.npy not found. Run `python src/augment_data.py` first.")
     print(f"Using data from '{data_dir}'")
     X = np.load(os.path.join(data_dir, "X.npy"))        # (N, 100, 3)
     y = np.load(os.path.join(data_dir, "y.npy"))        # (N,)
