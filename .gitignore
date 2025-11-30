@@ -1,1 +1,10 @@
+# macOS
 .DS_Store
+
+# Python venv
+venv/
+.venv/
+
+# Python 캐시
+__pycache__/
+*.py[cod]
