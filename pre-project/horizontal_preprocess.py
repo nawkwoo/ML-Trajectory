@@ -1,4 +1,4 @@
-"""Extract raw xyz from horizontal TXT files into a CSV (kwanwoo-style)."""
+"""Extract raw xyz from horizontal TXT files into a CSV"""
 
 from __future__ import annotations
 
