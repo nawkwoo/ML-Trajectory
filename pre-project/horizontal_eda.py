@@ -1,4 +1,4 @@
-"""EDA for horizontal trajectories (raw scale), mirroring kwanwoo circle notebook."""
+"""EDA for horizontal trajectories (raw scale)."""
 
 from __future__ import annotations
 
