@@ -11,71 +11,63 @@ from sklearn.svm import SVC
 
 
 def load_data():
-    data_dir = os.path.join("results", "augmented_data")
-    if not os.path.exists(os.path.join(data_dir, "X.npy")):
-        raise FileNotFoundError("results/augmented_data/X.npy not found. Run `python src/augment_data.py` first.")
-    print(f"Using data from '{data_dir}'")
-    X = np.load(os.path.join(data_dir, "X.npy"))        # (N, 100, 3)
-    y = np.load(os.path.join(data_dir, "y.npy"))        # (N,)
-    q = np.load(os.path.join(data_dir, "quality.npy"))  # (N,) 0=1st, 1=2nd
-    return X, y, q
+    split_dir = os.path.join("Data", "results", "split_data")
+    if not os.path.exists(os.path.join(split_dir, "X_train.npy")):
+        raise FileNotFoundError("Data/results/split_data/X_train.npy not found. Run `python src/data_split.py` first.")
+    print(f"Using split data from '{split_dir}'")
+    X_train = np.load(os.path.join(split_dir, "X_train.npy"))
+    y_train = np.load(os.path.join(split_dir, "y_train.npy"))
+    X_test = np.load(os.path.join(split_dir, "X_test.npy"))
+    y_test = np.load(os.path.join(split_dir, "y_test.npy"))
+    return X_train, y_train, X_test, y_test
 
 
 def main():
-    # 1. 데이터 로드
-    X, y, q = load_data()
+    X_train, y_train, X_test, y_test = load_data()
 
-    # 2. (N, 100, 3) -> (N, 300) 평탄화해 traditional ML에 투입
-    X_flat = X.reshape(X.shape[0], -1)
-
-    # 3-A. 1st로 학습, 2nd로 테스트 (분포 외 일반화 평가)
-    train_mask = q == 0  # 1st(고품질)
-    test_mask = q == 1   # 2nd(노이즈)
-
-    X_train, y_train = X_flat[train_mask], y[train_mask]
-    X_test, y_test = X_flat[test_mask], y[test_mask]
+    X_train_flat = X_train.reshape(X_train.shape[0], -1)
+    X_test_flat = X_test.reshape(X_test.shape[0], -1)
 
     print("Train size:", X_train.shape[0], " Test size:", X_test.shape[0])
 
-    # 4-1. SVM baseline
+    # SVM
     svm_clf = make_pipeline(
         StandardScaler(),
         SVC(kernel="rbf", C=1.0, gamma="scale", random_state=0),
     )
-    svm_clf.fit(X_train, y_train)
-    y_pred_svm = svm_clf.predict(X_test)
+    svm_clf.fit(X_train_flat, y_train)
+    y_pred_svm = svm_clf.predict(X_test_flat)
 
-    print("\n=== SVM (1st train -> 2nd test) ===")
+    print("\n=== SVM (train -> test) ===")
     print("Accuracy:", accuracy_score(y_test, y_pred_svm))
     print(classification_report(y_test, y_pred_svm))
 
-    # 4-2. RandomForest baseline
+    # RandomForest
     rf_clf = RandomForestClassifier(
         n_estimators=200,
         max_depth=None,
         random_state=0,
     )
-    rf_clf.fit(X_train, y_train)
-    y_pred_rf = rf_clf.predict(X_test)
+    rf_clf.fit(X_train_flat, y_train)
+    y_pred_rf = rf_clf.predict(X_test_flat)
 
-    print("\n=== RandomForest (1st train -> 2nd test) ===")
+    print("\n=== RandomForest (train -> test) ===")
     print("Accuracy:", accuracy_score(y_test, y_pred_rf))
     print(classification_report(y_test, y_pred_rf))
 
-    # 3-B. 동일 분포 5-fold 교차검증 (내부 품질 체크)
+    # 5-fold CV on train set
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
     svm_accs, rf_accs = [], []
-    for fold_idx, (tr, va) in enumerate(skf.split(X_flat, y), start=1):
-        X_tr, y_tr = X_flat[tr], y[tr]
-        X_va, y_va = X_flat[va], y[va]
+    for fold_idx, (tr, va) in enumerate(skf.split(X_train_flat, y_train), start=1):
+        X_tr, y_tr = X_train_flat[tr], y_train[tr]
+        X_va, y_va = X_train_flat[va], y_train[va]
 
         svm_cv = make_pipeline(
             StandardScaler(),
             SVC(kernel="rbf", C=1.0, gamma="scale", random_state=0),
         )
         svm_cv.fit(X_tr, y_tr)
-        svm_acc = svm_cv.score(X_va, y_va)
-        svm_accs.append(svm_acc)
+        svm_accs.append(svm_cv.score(X_va, y_va))
 
         rf_cv = RandomForestClassifier(
             n_estimators=200,
@@ -83,20 +75,19 @@ def main():
             random_state=0,
         )
         rf_cv.fit(X_tr, y_tr)
-        rf_acc = rf_cv.score(X_va, y_va)
-        rf_accs.append(rf_acc)
+        rf_accs.append(rf_cv.score(X_va, y_va))
 
-        print(f"[Fold {fold_idx}] SVM acc={svm_acc:.3f} | RF acc={rf_acc:.3f}")
+        print(f"[Fold {fold_idx}] SVM acc={svm_accs[-1]:.3f} | RF acc={rf_accs[-1]:.3f}")
 
-    print(f"\n=== 5-fold (same distribution) ===")
+    print("\n=== 5-fold (train set) ===")
     print(f"SVM mean acc={np.mean(svm_accs):.3f} ± {np.std(svm_accs):.3f}")
     print(f"RF  mean acc={np.mean(rf_accs):.3f} ± {np.std(rf_accs):.3f}")
 
-    # 4. 저장 (1st로 학습한 모델)
+    # Save models
     os.makedirs("models", exist_ok=True)
     ml_bundle = {"svm": svm_clf, "rf": rf_clf}
-    joblib.dump(ml_bundle, os.path.join("models", "ml_model.pkl"))
-    print("Saved models/ml_model.pkl")
+    joblib.dump(ml_bundle, os.path.join("models", "ml_modle.pkl"))
+    print("Saved models/ml_modle.pkl")
 
 
 if __name__ == "__main__":

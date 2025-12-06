@@ -1,225 +1,183 @@
-import os
-import glob
-import numpy as np
+"""
+Label-aware preprocessing with per-class axis scaling/selection.
 
+기본 흐름:
+1) Data/{label}/*.txt에서 7번째 컬럼(X/Y/Z)을 파싱해 (T,3) 궤적 로드
+2) 원점 이동 → 스케일 정규화(최대거리=1) → 길이 100 선형 보간
+3) 라벨별로 축 가중/제거 적용 (제안 비율: max=1, 전체 강도는 scale로 조절)
+4) Data/results/preprocessed_data/X.npy, y.npy, quality.npy 저장 (quality=0 통일)
+
+라벨별 축 규칙:
+- circle        : X=0.2,  Y=1.0, Z=0.7
+- diagonal_left : X=0.55, Y=1.0, Z=0.9
+- diagonal_right: dr-mode A) X=0.16, Y=0.86, Z=1.0 / dr-mode B) XY만 사용, Z 삭제
+- horizontal    : X=0.5,  Y=1.0, Z=0.0
+- vertical      : X=0.4,  Y=0.15, Z=1.0
+"""
+
+import glob
+import os
+from typing import Tuple
+import numpy as np
 
 LABELS = ["circle", "diagonal_left", "diagonal_right", "horizontal", "vertical"]
 
-# (first_start, first_end, second_start, second_end)
-SPLIT_RANGES: dict[str, tuple[int, int, int, int]] = {
-    "circle": (1, 8, 9, 16),
-    "diagonal_left": (1, 7, 8, 12),
-    "diagonal_right": (1, 7, 8, 12),
-    "horizontal": (1, 6, 7, 11),
-    "vertical": (1, 6, 7, 11),
-}
-
 
 def load_trajectory(file_path: str) -> np.ndarray:
-    """
-    Parse the 7th column (index 6) containing 'X/Y/Z' into a (T, 3) numpy array.
-    """
     xs, ys, zs = [], [], []
-
     with open(file_path, "r") as f:
         for line in f:
             cols = line.strip().split(",")
-
-            # Skip if not enough columns
             if len(cols) <= 6:
                 continue
-
             col = cols[6].strip()
-
-            # Skip separators / comments / empty
             if not col or col[0] in ("s", "S", "#"):
                 continue
-
             try:
                 x, y, z = map(float, col.split("/"))
             except ValueError:
                 continue
-
             xs.append(x)
             ys.append(y)
             zs.append(z)
-
     if not xs:
         raise ValueError(f"No valid trajectory data found in {file_path}")
-
-    traj = np.stack([xs, ys, zs], axis=1)  # (T, 3)
-    return traj
+    return np.stack([xs, ys, zs], axis=1)  # (T,3)
 
 
 def normalize_origin(traj: np.ndarray) -> np.ndarray:
-    """
-    Shift trajectory so that the first point becomes the origin (0, 0, 0).
-    """
     return traj - traj[0]
 
 
 def normalize_scale(traj: np.ndarray, eps: float = 1e-6) -> np.ndarray:
-    """
-    Normalize by the maximum distance from origin → roughly within [-1, 1].
-    """
     dists = np.linalg.norm(traj, axis=1)
     max_dist = np.max(dists)
     return traj / (max_dist + eps)
 
 
 def resample_trajectory(traj: np.ndarray, target_len: int = 100) -> np.ndarray:
-    """
-    Linearly resample trajectory to length target_len.
-    """
     T = len(traj)
     if T == target_len:
         return traj.copy()
-
     old_idx = np.linspace(0, T - 1, T)
     new_idx = np.linspace(0, T - 1, target_len)
-
-    resampled = np.zeros((target_len, 3), dtype=np.float32)
+    out = np.zeros((target_len, 3), dtype=np.float32)
     for dim in range(3):
-        resampled[:, dim] = np.interp(new_idx, old_idx, traj[:, dim])
-    return resampled
+        out[:, dim] = np.interp(new_idx, old_idx, traj[:, dim])
+    return out
 
 
-def preprocess(file_path: str, target_len: int = 100) -> np.ndarray:
+def apply_label_weights(traj: np.ndarray, label: str, dr_mode: str = "A", scale: float = 1.0) -> np.ndarray:
     """
-    Full preprocessing pipeline:
-    load → origin normalize → scale normalize → resample.
+    라벨별 축 가중/제거 적용 (비율은 max=1 기준, 강도는 scale로 조절).
+      circle        : X=0.2,  Y=1.0, Z=0.7
+      diagonal_left : X=0.55, Y=1.0, Z=0.9
+      diagonal_right: mode A -> X=0.16, Y=0.86, Z=1.0 (Z 유지)
+                      mode B -> XY만 사용, Z 제거
+      horizontal    : X=0.5,  Y=1.0, Z=0.0 (Z 무시)
+      vertical      : X=0.4,  Y=0.15, Z=1.0
     """
-    traj = load_trajectory(file_path)
-    traj = normalize_origin(traj)
-    traj = normalize_scale(traj)
-    traj = resample_trajectory(traj, target_len)
-    return traj.astype(np.float32)
+    base = {
+        "circle": (0.2, 1.0, 0.7),
+        "diagonal_left": (0.55, 1.0, 0.9),
+        "diagonal_right": (0.16, 0.86, 1.0),
+        "horizontal": (0.5, 1.0, 0.0),
+        "vertical": (0.4, 0.15, 1.0),
+    }
 
+    if label not in base:
+        return traj.astype(np.float32)
 
-def _parse_index_from_path(path: str) -> int | None:
-    """
-    Extract integer index from a filename like '3.txt'.
-    """
-    name = os.path.splitext(os.path.basename(path))[0]
-    try:
-        return int(name)
-    except ValueError:
-        return None
+    weights = np.asarray(base[label], dtype=np.float32) * float(scale)
 
+    if label == "diagonal_right" and dr_mode.upper() == "B":
+        # Z 제거, XY 비율만 적용
+        return (traj[:, :2] * weights[:2]).astype(np.float32)
 
-def _quality_from_index(label: str, index: int) -> int | None:
-    """
-    Map file index to quality:
-        0 -> first (clean)
-        1 -> second (noisy)
-    """
-    ranges = SPLIT_RANGES.get(label)
-    if ranges is None:
-        return None
-
-    first_start, first_end, second_start, second_end = ranges
-    if first_start <= index <= first_end:
-        return 0
-    if second_start <= index <= second_end:
-        return 1
-    return None
+    return (traj * weights).astype(np.float32)
 
 
 def build_dataset(
-    data_root: str = "Data",
-    labels: list[str] | None = None,
+    data_root: str,
+    save_dir: str,
+    dr_mode: str = "A",
     target_len: int = 100,
-    save_dir: str | None = None,
-    split: str = "both",
-    include_quality: bool = False,
-):
-    """
-    Build dataset from folder structure like:
-        Data/{label}/*.txt
-
-    Parameters
-    ----------
-    split : {"first", "second", "both"}
-        - "first"  : only clean (1st) recordings
-        - "second" : only noisy (2nd) recordings
-        - "both"   : use both and keep their quality labels.
-
-    include_quality : bool
-        If True, also return quality array (0 for first, 1 for second).
-
-    Returns
-    -------
-    X : (N, target_len, 3)
-    y : (N,) integer class labels
-    quality (optional) : (N,) integer quality labels (0/1)
-
-    If save_dir is given, saves X.npy and y.npy (and quality.npy if requested).
-    """
-    if labels is None:
-        labels = LABELS
-
-    if split not in ("first", "second", "both"):
-        raise ValueError("split must be one of: 'first', 'second', 'both'")
-
+    weight_scale: float = 1.0,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     X_list: list[np.ndarray] = []
     y_list: list[int] = []
     q_list: list[int] = []
 
-    label_to_idx = {label: i for i, label in enumerate(labels)}
+    label_to_idx = {label: i for i, label in enumerate(LABELS)}
 
-    for label in labels:
+    for label in LABELS:
         folder = os.path.join(data_root, label)
         paths = sorted(glob.glob(os.path.join(folder, "*.txt")))
-
-        for path in paths:
-            idx = _parse_index_from_path(path)
-            if idx is None:
-                continue
-
-            quality = _quality_from_index(label, idx)
-            if quality is None:
-                continue
-
-            if split == "first" and quality != 0:
-                continue
-            if split == "second" and quality != 1:
-                continue
-
-            traj = preprocess(path, target_len=target_len)
+        for p in paths:
+            traj = load_trajectory(p)
+            traj = normalize_origin(traj)
+            traj = normalize_scale(traj)
+            traj = resample_trajectory(traj, target_len=target_len)
+            traj = apply_label_weights(traj, label, dr_mode=dr_mode, scale=weight_scale)
             X_list.append(traj)
             y_list.append(label_to_idx[label])
-            q_list.append(quality)
+            q_list.append(0)
 
     if not X_list:
-        raise ValueError(f"No trajectory files found under {data_root} for split={split}")
+        raise ValueError(f"No trajectories built from {data_root}")
 
-    X = np.stack(X_list, axis=0).astype(np.float32)
+    # Pad to 3 channels if some trajectories became 2D (diagonal_right mode B)
+    max_channels = max(t.shape[1] for t in X_list)
+    padded = []
+    for t in X_list:
+        if t.shape[1] == max_channels:
+            padded.append(t)
+        else:
+            pad = np.zeros((t.shape[0], max_channels - t.shape[1]), dtype=t.dtype)
+            padded.append(np.concatenate([t, pad], axis=1))
+
+    X = np.stack(padded, axis=0).astype(np.float32)
     y = np.array(y_list, dtype=np.int64)
-    quality_arr = np.array(q_list, dtype=np.int64)
+    quality = np.array(q_list, dtype=np.int64)
 
-    if save_dir is not None:
-        os.makedirs(save_dir, exist_ok=True)
-        np.save(os.path.join(save_dir, "X.npy"), X)
-        np.save(os.path.join(save_dir, "y.npy"), y)
-        if include_quality:
-            np.save(os.path.join(save_dir, "quality.npy"), quality_arr)
+    os.makedirs(save_dir, exist_ok=True)
+    np.save(os.path.join(save_dir, "X.npy"), X)
+    np.save(os.path.join(save_dir, "y.npy"), y)
+    np.save(os.path.join(save_dir, "quality.npy"), quality)
 
-    if include_quality:
-        return X, y, quality_arr
-    return X, y
+    return X, y, quality
 
 
-if __name__ == "__main__":
-    # When run as a script, build the full dataset (both qualities)
-    X, y, q = build_dataset(
-        data_root="Data",
-        labels=LABELS,
-        target_len=100,
-        save_dir=os.path.join("results", "preprocessed_data"),
-        split="both",
-        include_quality=True,
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Label-aware preprocessing with per-class axis weights",
     )
-    print("Saved preprocessed dataset to 'results/preprocessed_data'")
+    parser.add_argument("--data-root", default="Data", help="Input data root (default: Data)")
+    parser.add_argument(
+        "--save-dir",
+        default=os.path.join("Data", "results", "preprocessed_data"),
+        help="Output dir for npy files (default: Data/results/preprocessed_data)",
+    )
+    parser.add_argument("--dr-mode", choices=["A", "B"], default="A",
+                        help="Diagonal_right mode: A=XY weighted, Z kept / B=XY only (drop Z)")
+    parser.add_argument("--weight-scale", type=float, default=1.0,
+                        help="Global multiplier for axis weights (default: 1.0)")
+    args = parser.parse_args()
+
+    X, y, q = build_dataset(
+        data_root=args.data_root,
+        save_dir=args.save_dir,
+        dr_mode=args.dr_mode,
+        target_len=100,
+        weight_scale=args.weight_scale,
+    )
+    print(f"Saved preprocessed dataset to '{args.save_dir}'")
     print("X shape:", X.shape)
     print("y shape:", y.shape)
     print("quality shape:", q.shape)
+
+
+if __name__ == "__main__":
+    main()
