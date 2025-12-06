@@ -46,6 +46,11 @@ python src/ml_model.py
 - 평가: train 5-fold CV + test 세트
 - 저장: `models/ml_modle.pkl` (SVM/RF dict)
 
+## 한 줄 정리 (전처리/증강/ML)
+- 전처리: X/Y/Z 파싱 → 원점 이동 → 스케일 정규화 → 길이 100 보간 → 라벨별 축 가중/제거 적용 → `Data/results/preprocessed_data`
+- 증강: 전처리 결과에 noise/shift/crop/mask/XY 회전/mixup 적용 → `Data/results/augmented_data`
+- ML: 증강 데이터 8:2 분할 후 SVM/RF 학습·교차검증·테스트 → `models/ml_modle.pkl`
+
 ## 최신 학습 결과 (증강 후 8:2 분할, dr-mode A)
 - Test set (87 samples):  
   - SVM 정확도: **0.9885**  
