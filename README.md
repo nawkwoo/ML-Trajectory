@@ -30,6 +30,12 @@
 - 전처리2: `src/preprocess2.py`  
   - 라벨별 축 스케일 적용 후 길이 100 보간  
   - diagonal_right: `--dr-mode A`(X*0.2, Y*0.7, Z=0) 또는 `B`(XY만, Z삭제)  
+  - 라벨별 축 규칙 요약  
+    - circle        : X=1.0, Y=1.0, Z=0.5  
+    - diagonal_left : X=0.5, Y=1.0, Z=0.7  
+    - diagonal_right: A) X=0.2, Y=0.7, Z=0  /  B) XY만 사용(Z 삭제)  
+    - horizontal    : X=1.0, Y=0.3, Z=0.3  
+    - vertical      : X=0.4, Y=0.0, Z=1.0  
   - 출력: `results/preprocessed_data2/*.npy`  
   - 실행: `python src/preprocess2.py --dr-mode A`
 - 증강2: `src/augment_data2.py`  
