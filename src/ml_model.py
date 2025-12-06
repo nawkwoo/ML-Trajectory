@@ -5,9 +5,6 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import StratifiedKFold
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
 
 
 def load_data():
@@ -30,18 +27,6 @@ def main():
 
     print("Train size:", X_train.shape[0], " Test size:", X_test.shape[0])
 
-    # SVM
-    svm_clf = make_pipeline(
-        StandardScaler(),
-        SVC(kernel="rbf", C=1.0, gamma="scale", random_state=0),
-    )
-    svm_clf.fit(X_train_flat, y_train)
-    y_pred_svm = svm_clf.predict(X_test_flat)
-
-    print("\n=== SVM (train -> test) ===")
-    print("Accuracy:", accuracy_score(y_test, y_pred_svm))
-    print(classification_report(y_test, y_pred_svm))
-
     # RandomForest
     rf_clf = RandomForestClassifier(
         n_estimators=200,
@@ -57,17 +42,10 @@ def main():
 
     # 5-fold CV on train set
     skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=0)
-    svm_accs, rf_accs = [], []
+    rf_accs = []
     for fold_idx, (tr, va) in enumerate(skf.split(X_train_flat, y_train), start=1):
         X_tr, y_tr = X_train_flat[tr], y_train[tr]
         X_va, y_va = X_train_flat[va], y_train[va]
-
-        svm_cv = make_pipeline(
-            StandardScaler(),
-            SVC(kernel="rbf", C=1.0, gamma="scale", random_state=0),
-        )
-        svm_cv.fit(X_tr, y_tr)
-        svm_accs.append(svm_cv.score(X_va, y_va))
 
         rf_cv = RandomForestClassifier(
             n_estimators=200,
@@ -77,17 +55,15 @@ def main():
         rf_cv.fit(X_tr, y_tr)
         rf_accs.append(rf_cv.score(X_va, y_va))
 
-        print(f"[Fold {fold_idx}] SVM acc={svm_accs[-1]:.3f} | RF acc={rf_accs[-1]:.3f}")
+        print(f"[Fold {fold_idx}] RF acc={rf_accs[-1]:.3f}")
 
     print("\n=== 5-fold (train set) ===")
-    print(f"SVM mean acc={np.mean(svm_accs):.3f} ± {np.std(svm_accs):.3f}")
     print(f"RF  mean acc={np.mean(rf_accs):.3f} ± {np.std(rf_accs):.3f}")
 
     # Save models
     os.makedirs("models", exist_ok=True)
-    ml_bundle = {"svm": svm_clf, "rf": rf_clf}
-    joblib.dump(ml_bundle, os.path.join("models", "ml_modle.pkl"))
-    print("Saved models/ml_modle.pkl")
+    joblib.dump(rf_clf, os.path.join("models", "ml_modle.pkl"))
+    print("Saved models/ml_modle.pkl (RF only)")
 
 
 if __name__ == "__main__":

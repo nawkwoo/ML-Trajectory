@@ -55,7 +55,7 @@ def normalize_scale(traj: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     return traj / (max_dist + eps)
 
 
-def resample_trajectory(traj: np.ndarray, target_len: int = 100) -> np.ndarray:
+def resample_trajectory(traj: np.ndarray, target_len: int = 128) -> np.ndarray:
     T = len(traj)
     if T == target_len:
         return traj.copy()
@@ -101,7 +101,7 @@ def build_dataset(
     data_root: str,
     save_dir: str,
     dr_mode: str = "A",
-    target_len: int = 100,
+    target_len: int = 128,
     weight_scale: float = 1.0,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     X_list: list[np.ndarray] = []
@@ -170,7 +170,7 @@ def main():
         data_root=args.data_root,
         save_dir=args.save_dir,
         dr_mode=args.dr_mode,
-        target_len=100,
+        target_len=128,
         weight_scale=args.weight_scale,
     )
     print(f"Saved preprocessed dataset to '{args.save_dir}'")
