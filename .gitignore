@@ -8,3 +8,6 @@ venv/
 # Python 캐시
 __pycache__/
 *.py[cod]
+
+# Demo input data (raw TXT files not committed)
+demo/data/
