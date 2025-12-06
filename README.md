@@ -10,40 +10,39 @@
   - `results/augmented_data/`     : 증강된 `X.npy`, `y.npy`, `quality.npy`
 - `models/` : 학습된 ML 모델(`ml_model.pkl`)
 
-## 전처리 (TXT → NPY)
-- 스크립트: `src/preprocess.py`
-- 내용: 원점 이동 → 스케일 정규화(최대거리=1) → 길이 100 보간
-- 출력: `results/preprocessed_data/X.npy, y.npy, quality.npy` (quality: 0=1st, 1=2nd)
-- 실행:
-```bash
-python src/preprocess.py
-```
+## 1안: 기본 파이프라인 (전역 동일 전처리/증강)
+- 전처리: `src/preprocess.py`  
+  - 원점 이동 → 스케일 정규화 → 길이 100 보간  
+  - 출력: `results/preprocessed_data/X.npy, y.npy, quality.npy`  
+  - 실행: `python src/preprocess.py`
+- 증강: `src/augment_data.py`  
+  - 입력: `results/preprocessed_data/*.npy`  
+  - 기본: 1st만 증강, noise/shift/crop/mask/XY회전/mixup  
+  - 출력: `results/augmented_data/*.npy`  
+  - 실행: `python src/augment_data.py`
+- 모델(ML): `src/ml_model.py`  
+  - 데이터: `results/augmented_data`  
+  - 평가: 1st→2nd, 5-fold CV  
+  - 저장: `models/ml_model.pkl`  
+  - 실행: `python src/ml_model.py`
 
-## 증강
-- 스크립트: `src/augment_data.py`
-- 입력: `results/preprocessed_data/*.npy`
-- 기본: 1st(quality=0)만 증강, 원본 1st/2nd는 그대로 포함
-- 기법: noise, time shift, crop+resample, masking, XY 회전, same-class mixup
-- 옵션: `--quality-filter {0,1,all}`, `--noise-sigma`, `--mask-max-ratio`
-- 출력: `results/augmented_data/X.npy, y.npy, quality.npy`
-- 실행:
-```bash
-python src/augment_data.py
-```
-
-## 모델 (ML: SVM / RandomForest)
-- 스크립트: `src/ml_model.py`
-- 데이터: `results/augmented_data` (필수)
-- 특징: 궤적 `(100,3)`을 평탄화해 300차원 벡터 사용
-- 평가:
-  - 1st train → 2nd test (일반화)
-  - 동일 분포 5-fold 교차검증
-- 저장: `models/ml_model.pkl` (SVM/RF dict)
-- 실행:
-```bash
-python src/ml_model.py
-```
+## 2안: 라벨별 축 가중/제거 반영 파이프라인
+- 전처리2: `src/preprocess2.py`  
+  - 라벨별 축 스케일 적용 후 길이 100 보간  
+  - diagonal_right: `--dr-mode A`(X*0.2, Y*0.7, Z=0) 또는 `B`(XY만, Z삭제)  
+  - 출력: `results/preprocessed_data2/*.npy`  
+  - 실행: `python src/preprocess2.py --dr-mode A`
+- 증강2: `src/augment_data2.py`  
+  - 입력: `results/preprocessed_data2/*.npy`  
+  - 기본: 1st만 증강, 동일 기법  
+  - 출력: `results/augmented_data2/*.npy`  
+  - 실행: `python src/augment_data2.py`
+- 모델2(ML): `src/ml_model2.py`  
+  - 데이터: `results/augmented_data2`  
+  - 평가: 1st→2nd, 5-fold CV  
+  - 저장: `models/ml_model2.pkl`  
+  - 실행: `python src/ml_model2.py`
 
 ## 추가 분석/시각화
-- `src/pca_diagonal_right.py` : diagonal_right 샘플 PCA, XY/XZ/YZ 뷰 확인 (라벨 상수 설정 필요)
-- `src/visualize_diagonal_right.py` : `Data/diagonal_right/*.txt`를 3D + XY/XZ/YZ로 시각화 (원점 정규화 옵션)
+- `src/pca_diagonal_right.py` : diagonal_right PCA 및 PC 계수 확인 (라벨 상수 설정 필요)
+- `src/visualize_diagonal_right.py` : `Data/diagonal_right/*.txt` 3D + XY/XZ/YZ 시각화 (원점 정규화 옵션)
