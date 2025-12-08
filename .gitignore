@@ -11,3 +11,4 @@ __pycache__/
 
 # Demo input data (raw TXT files not committed)
 demo/data/
+demo/goal/

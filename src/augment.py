@@ -68,6 +68,7 @@ def time_shift(x: np.ndarray, max_shift: int = 10) -> np.ndarray:
         시간축이 랜덤하게 이동된 궤적, shape (T, C)
     """
     T = x.shape[0]
+    max_shift = min(max_shift, T - 1)
     shift = np.random.randint(-max_shift, max_shift + 1)
     if shift == 0:
         return x.copy()

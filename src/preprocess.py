@@ -4,15 +4,9 @@ Label-aware preprocessing with per-class axis scaling/selection.
 기본 파이프라인
 ---------------
 1) Data/{label}/*.txt에서 7번째 컬럼(인덱스 6, "X/Y/Z" 문자열)을 파싱하여 (T, 3) 궤적 로드
-2) 시작점을 원점으로 이동 → 스케일 정규화(원점으로부터의 최대 거리 = 1) → 길이 100으로 선형 보간
+2) 시작점을 원점으로 이동 → 스케일 정규화(원점으로부터의 최대 거리 = 1) → 길이 128로 선형 보간
 3) 라벨별 축 가중치/제거 적용 (비율은 max=1 기준, 전체 강도는 weight_scale로 조절)
 4) 결과를 save_dir/X.npy, save_dir/y.npy 로 저장
-
-주의 사항
----------
-- diagonal_right 라벨은 --dr-mode 옵션으로 A/B 동작 선택:
-- A: X=0.16, Y=0.86, Z=1.0 (Z 축 유지, XY 비율만 조정)
-- B: X, Y만 사용(Z 축 제거) → 채널 수가 줄어들면 후단에서 zero-padding으로 맞춤
 
 """
 
@@ -125,7 +119,7 @@ def resample_trajectory(traj: np.ndarray, target_len: int = 128) -> np.ndarray:
     traj : np.ndarray
         shape (T, 3), 스케일 정규화된 궤적
     target_len : int, optional
-        리샘플링 후의 길이 (기본값: 100)
+        리샘플링 후의 길이 (기본값: 128)
 
     Returns
     -------
@@ -149,7 +143,6 @@ def resample_trajectory(traj: np.ndarray, target_len: int = 128) -> np.ndarray:
 def apply_label_weights(
     traj: np.ndarray,
     label: str,
-    dr_mode: str = "A",
     scale: float = 1.0,
 ) -> np.ndarray:
     """
@@ -157,16 +150,11 @@ def apply_label_weights(
 
     base 비율(라벨별 기본 가중치, scale=1.0일 때)
     ------------------------------------------------
-    circle        : X=0.20, Y=1.00, Z=0.70
-    diagonal_left : X=0.55, Y=1.00, Z=0.90
-    diagonal_right: X=0.16, Y=0.86, Z=1.00
-    horizontal    : X=0.50, Y=1.00, Z=0.00 (Z 무시)
-    vertical      : X=0.40, Y=0.15, Z=1.00
-
-    diagonal_right의 특별 동작
-    ---------------------------
-    - dr_mode == "A": 위 비율을 그대로 사용 (X, Y 비율 조정, Z 유지)
-    - dr_mode == "B": XY만 사용(Z 제거) → (T, 2) 배열로 반환
+    circle        : X=1.00, Y=1.00, Z=1.00
+    diagonal_left : X=0.16, Y=1.00, Z=0.86   (Y 강조)
+    diagonal_right: X=0.16, Y=0.86, Z=1.00   (Z 강조)
+    horizontal    : X=1.00, Y=0.15, Z=0.40   (X 강조)
+    vertical      : X=0.40, Y=0.15, Z=1.00   (Z 강조)
 
     Parameters
     ----------
@@ -174,8 +162,6 @@ def apply_label_weights(
         shape (T, 3), 리샘플링된 궤적
     label : str
         궤적의 라벨 이름
-    dr_mode : str, optional
-        diagonal_right 처리 모드 ("A" 또는 "B")
     scale : float, optional
         전체 축 가중치의 배율(강도). 1.0이면 base 비율 그대로 사용.
 
@@ -185,11 +171,11 @@ def apply_label_weights(
         라벨별 가중치/제거가 적용된 궤적
     """
     base = {
-        "circle": (0.2, 1.0, 0.7),
-        "diagonal_left": (0.55, 1.0, 0.9),
-        "diagonal_right": (0.16, 0.86, 1.0),
-        "horizontal": (0.5, 1.0, 0.0),
-        "vertical": (0.4, 0.15, 1.0),
+        "circle": (1.0, 1.0, 1.0),
+        "diagonal_left":  (0.16, 1.00, 0.86),  # Y 강조
+        "diagonal_right": (0.16, 0.86, 1.00),  # Z 강조
+        "horizontal": (1.0, 0.15, 0.4),        # X 강조
+        "vertical":   (0.4, 0.15, 1.0),        # Z 강조
     }
 
     if label not in base:
@@ -197,19 +183,13 @@ def apply_label_weights(
 
     weights = np.asarray(base[label], dtype=np.float32) * float(scale)
 
-    # diagonal_right + mode B: XY만 사용, Z는 제거
-    if label == "diagonal_right" and dr_mode.upper() == "B":
-        return (traj[:, :2] * weights[:2]).astype(np.float32)
-
-    # 그 외: 3축에 동일하게 가중치 적용
     return (traj * weights).astype(np.float32)
 
 
 def build_dataset(
     data_root: str,
     save_dir: str,
-    dr_mode: str = "A",
-    target_len: int = 100,
+    target_len: int = 128,
     weight_scale: float = 1.0,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -233,9 +213,8 @@ def build_dataset(
     ---------
     1) 각 라벨 폴더에서 *.txt 파일을 순회
     2) load_trajectory → normalize_origin → normalize_scale → resample_trajectory
-    3) apply_label_weights(라벨별 축 가중치/제거 적용)
-    4) diagonal_right mode B에서 2채널이 된 경우, 후단에서 zero-padding으로 3채널 맞춤
-    5) X, y를 npy 파일로 저장
+    3) 가중치 없는 버전과, apply_label_weights(라벨별 축 가중치/제거 적용) 버전을 모두 생성
+    4) X, y를 npy 파일로 저장
 
     Parameters
     ----------
@@ -243,10 +222,8 @@ def build_dataset(
         원본 txt 파일이 들어 있는 상위 디렉토리 경로
     save_dir : str
         npy 결과를 저장할 디렉토리 경로
-    dr_mode : str, optional
-        diagonal_right 처리 모드 ("A" 또는 "B")
     target_len : int, optional
-        리샘플링 후 각 궤적의 길이 (기본값: 100)
+        리샘플링 후 각 궤적의 길이 (기본값: 128)
     weight_scale : float, optional
         축 가중치의 전체 강도 배율
 
@@ -270,27 +247,22 @@ def build_dataset(
             traj = load_trajectory(p)
             traj = normalize_origin(traj)
             traj = normalize_scale(traj)
-            traj = resample_trajectory(traj, target_len=target_len)
-            traj = apply_label_weights(traj, label, dr_mode=dr_mode, scale=weight_scale)
+            traj_resampled = resample_trajectory(traj, target_len=target_len)
 
-            X_list.append(traj)
+            # (1) 가중치 없는 버전
+            X_list.append(traj_resampled.astype(np.float32))
             y_list.append(label_to_idx[label])
+
+            # (2) 가중치 적용된 버전
+            traj_weighted = apply_label_weights(traj_resampled, label, scale=weight_scale)
+            X_list.append(traj_weighted)
+            y_list.append(label_to_idx[label])
+
 
     if not X_list:
         raise ValueError(f"No trajectories built from {data_root}")
 
-    # diagonal_right mode B 등으로 인해 채널 수가 줄어든 경우를 고려해
-    # 가장 큰 채널 수를 기준으로 나머지는 zero-padding으로 맞춘다.
-    max_channels = max(t.shape[1] for t in X_list)
-    padded: List[np.ndarray] = []
-    for t in X_list:
-        if t.shape[1] == max_channels:
-            padded.append(t)
-        else:
-            pad = np.zeros((t.shape[0], max_channels - t.shape[1]), dtype=t.dtype)
-            padded.append(np.concatenate([t, pad], axis=1))
-
-    X = np.stack(padded, axis=0).astype(np.float32)
+    X = np.stack(X_list, axis=0).astype(np.float32)
     y = np.array(y_list, dtype=np.int64)
 
     os.makedirs(save_dir, exist_ok=True)
@@ -308,7 +280,6 @@ def main() -> None:
     ----
     python preprocess.py \\
         --data-root ../data \\
-        --dr-mode A \\
         --weight-scale 1.0
 
     - data_root 기본값은 프로젝트 루트 기준 "data"
@@ -323,7 +294,7 @@ def main() -> None:
     # 현재 파일(src/preprocess.py)의 위치 기준으로 프로젝트 루트 계산
     current_dir = os.path.dirname(os.path.abspath(__file__))      # .../src
     project_root = os.path.dirname(current_dir)                   # 프로젝트 루트
-    default_data_root = os.path.join(project_root, "data")        # .../data
+    default_data_root = os.path.join(project_root, "data/raw")        # .../data/raw
     default_save_dir = os.path.join(project_root, "data", "result")  # .../data/result
 
     parser.add_argument(
@@ -337,12 +308,6 @@ def main() -> None:
         help="X.npy, y.npy를 저장할 디렉토리 (기본값: project_root/data/result)",
     )
     parser.add_argument(
-        "--dr-mode",
-        choices=["A", "B"],
-        default="A",
-        help="diagonal_right 처리 모드: A=XY weighted(Z 유지), B=XY only(Z 제거)",
-    )
-    parser.add_argument(
         "--weight-scale",
         type=float,
         default=1.0,
@@ -354,8 +319,7 @@ def main() -> None:
     X, y = build_dataset(
         data_root=args.data_root,
         save_dir=args.save_dir,
-        dr_mode=args.dr_mode,
-        target_len=100,
+        target_len=128,
         weight_scale=args.weight_scale,
     )
 

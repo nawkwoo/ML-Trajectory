@@ -73,6 +73,8 @@ def main() -> None:
 
     print(f"Saved split data to '{split_dir}'")
 
+    unique, counts = np.unique(y, return_counts=True)
+    print("Class distribution:", dict(zip(unique, counts)))
 
 if __name__ == "__main__":
     main()

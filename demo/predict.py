@@ -1,11 +1,14 @@
 """
-Inference script for ML-Trajectory (RF baseline).
+Inference script for ML-Trajectory (RF baseline, GOAL version).
 
-- --input 은 OPTIONAL (기본: demo/data/)
-- 모델의 입력 차원에 맞춰 자동으로 시퀀스 길이(target_len)를 결정
-- Train 시점: (T, 3) → flatten 해서 RandomForest 학습
-- Inference 시점: raw TXT → normalize → resample(target_len) → flatten 후 예측
-
+- 모든 출력 PNG 및 로그 파일이 demo/goal/ 아래로 저장되도록 수정됨.
+- 입력(raw TXT) → origin shift → scale normalize → resample → flatten → RF prediction
+- 모델의 feature 차원(n_features_in_)을 통해 target_len 자동 추론
+- 저장 파일:
+    goal/prediction_summary.png
+    goal/confidence_hist.png
+    goal/predictions.txt
+    goal/plots/*.png (각 trajectory 시각화)
 """
 
 import argparse
@@ -24,12 +27,7 @@ LABELS = ["circle", "diagonal_left", "diagonal_right", "horizontal", "vertical"]
 # Utility functions
 # ───────────────────────────────
 def load_trajectory(path: str) -> np.ndarray:
-    """
-    하나의 TXT 파일에서 end-effector 궤적을 읽어 (T, 3) 배열로 반환한다.
-
-    - 각 줄은 콤마(,)로 구분된 여러 컬럼으로 구성되어 있으며, 7번째 컬럼(인덱스 6)에 'X/Y/Z' 형태의 문자열이 있다고 가정한다.
-    - s, S, # 로 시작하는 줄은 헤더/코멘트로 간주하고 무시한다.
-    """
+    """TXT 파일에서 'X/Y/Z' 궤적 데이터를 읽어 (T,3) numpy array 반환."""
     xs, ys, zs = [], [], []
 
     with open(path, "r") as f:
@@ -51,40 +49,23 @@ def load_trajectory(path: str) -> np.ndarray:
     if not xs:
         raise ValueError(f"No valid trajectory in {path}")
 
-    return np.stack([xs, ys, zs], axis=1)  # (T, 3)
+    return np.stack([xs, ys, zs], axis=1)
 
 
 def normalize_origin(traj: np.ndarray) -> np.ndarray:
-    """궤적의 시작점을 원점(0, 0, 0)으로 이동한다."""
+    """시작점을 원점(0,0,0)으로 이동."""
     return traj - traj[0]
 
 
 def normalize_scale(traj: np.ndarray, eps: float = 1e-6) -> np.ndarray:
-    """
-    궤적을 '원점으로부터의 최대 거리' 기준으로 스케일 정규화한다.
-    가장 먼 점의 거리가 1에 가깝도록 전체를 (max_dist + eps)로 나눈다.
-    """
+    """원점으로부터 가장 먼 점이 거리 1이 되도록 정규화."""
     dists = np.linalg.norm(traj, axis=1)
     max_dist = np.max(dists)
     return traj / (max_dist + eps)
 
 
 def resample(traj: np.ndarray, target_len: int) -> np.ndarray:
-    """
-    궤적을 선형 보간하여 고정 길이(target_len)로 리샘플링한다.
-
-    Parameters
-    ----------
-    traj : np.ndarray
-        shape (T, 3)의 궤적
-    target_len : int
-        리샘플링 후 길이
-
-    Returns
-    -------
-    np.ndarray
-        shape (target_len, 3)의 리샘플링된 궤적
-    """
+    """선형 보간으로 궤적을 target_len 길이로 리샘플."""
     T = len(traj)
     if T == target_len:
         return traj.copy()
@@ -100,10 +81,7 @@ def resample(traj: np.ndarray, target_len: int) -> np.ndarray:
 
 
 def collect_files(path: str) -> List[str]:
-    """
-    디렉토리일 경우 *.txt 파일을 모두 모으고,
-    파일일 경우 해당 경로만 리스트로 반환한다.
-    """
+    """디렉토리 → *.txt 전부 수집, 파일 → 단일 리스트."""
     if os.path.isdir(path):
         return sorted(glob.glob(os.path.join(path, "*.txt")))
     return [path]
@@ -113,67 +91,67 @@ def collect_files(path: str) -> List[str]:
 # Main
 # ───────────────────────────────
 def main() -> None:
-    """
-    학습된 RandomForest 모델(models/ml_model_rf.pkl)을 사용해
-    TXT 궤적 파일들을 분류하고, 결과 요약 PNG를 저장한다.
+    script_dir = os.path.dirname(os.path.abspath(__file__))     # demo/
+    project_root = os.path.dirname(script_dir)                  # root/
 
-    - 모델의 n_features_in_을 읽어 feature 차원에 맞게 리샘플 길이(target_len)를 자동으로 결정한다.
-    """
-    # demo/predict.py 기준 경로 설정
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)
-
-    default_input = os.path.join(script_dir, "data")  # demo/data/
+    default_input = os.path.join(script_dir, "data")
     default_model = os.path.join(project_root, "models", "ml_model_rf.pkl")
 
     parser = argparse.ArgumentParser(
         description="Predict labels for raw TXT trajectories using trained RF model."
     )
-    parser.add_argument(
-        "--input",
-        default=default_input,
-        help=f"TXT 파일 또는 디렉토리 경로 (기본값: {default_input})",
-    )
-    parser.add_argument(
-        "--model",
-        default=default_model,
-        help=f"RF 모델 경로 (기본값: {default_model})",
-    )
+    parser.add_argument("--input", default=default_input, help="TXT 파일 또는 디렉토리 경로")
+    parser.add_argument("--model", default=default_model, help="학습된 RF 모델 경로")
     args = parser.parse_args()
 
-    # 모델 로드
+    # ───────────────────────────────
+    # Load model
+    # ───────────────────────────────
     if not os.path.exists(args.model):
         raise FileNotFoundError(f"Model not found: {args.model}")
+
     rf = joblib.load(args.model)
 
-    # 모델이 기대하는 feature 차원으로부터 target_len 추론
+    # 모델이 기대하는 feature dimension → 길이 자동 추론
     n_features = rf.n_features_in_
-    n_channels = 3  # (x, y, z)
+    n_channels = 3
     if n_features % n_channels != 0:
-        raise ValueError(
-            f"Model expects {n_features} features, which is not divisible by {n_channels} channels."
-        )
-    target_len = n_features // n_channels
-    print(f"[INFO] Model expects {n_features} features → target_len={target_len}, channels={n_channels}")
+        raise ValueError(f"Model expects {n_features} features, not divisible by 3")
 
-    # 입력 파일 수집
+    target_len = n_features // n_channels
+    print(f"[INFO] Model expects {n_features} features → target_len={target_len}")
+
+    # ───────────────────────────────
+    # Prepare GOAL dirs
+    # ───────────────────────────────
+    goal_dir = os.path.join(script_dir, "goal")
+    plots_dir = os.path.join(goal_dir, "plots")
+
+    os.makedirs(goal_dir, exist_ok=True)
+    os.makedirs(plots_dir, exist_ok=True)
+
+    # ───────────────────────────────
+    # Collect TXT files
+    # ───────────────────────────────
     files = collect_files(args.input)
     if not files:
         raise FileNotFoundError(f"No TXT files in {args.input}")
 
-    print(f"[INFO] Loaded model: {args.model}")
-    print(f"[INFO] Found {len(files)} TXT files in {args.input}")
+    print(f"[INFO] Found {len(files)} TXT files in '{args.input}'")
 
     pred_counts = {lbl: 0 for lbl in LABELS}
-    results: list[tuple[str, str, float]] = []
+    confidences = []
+    results = []
 
+    # ───────────────────────────────
+    # Prediction loop
+    # ───────────────────────────────
     for path in files:
         traj = load_trajectory(path)
         traj = normalize_origin(traj)
         traj = normalize_scale(traj)
-        traj = resample(traj, target_len=target_len)  # 길이 모델에 맞춤
+        traj = resample(traj, target_len)
 
-        # 여기서는 axis weighting 미적용: (target_len, 3) → 1D 벡터
         feat_vec = traj.reshape(1, -1)
 
         pred = rf.predict(feat_vec)[0]
@@ -181,28 +159,74 @@ def main() -> None:
 
         fname = os.path.basename(path)
         pred_label = LABELS[pred]
-        pred_prob = float(prob)
 
-        results.append((fname, pred_label, pred_prob))
+        results.append((fname, pred_label, float(prob)))
         pred_counts[pred_label] += 1
+        confidences.append(float(prob))
 
-    # 콘솔 출력
+        # ───────────────────────────────
+        # Save trajectory plot
+        # ───────────────────────────────
+        plot_path = os.path.join(plots_dir, f"{fname}_plot.png")
+
+        plt.figure(figsize=(4,3))
+        plt.plot(traj[:,0], traj[:,1], label="XY path")
+        plt.scatter(traj[0,0], traj[0,1], c="green", label="Start")
+        plt.scatter(traj[-1,0], traj[-1,1], c="red", label="End")
+        plt.title(f"{fname} → {pred_label}")
+        plt.xlabel("X"); plt.ylabel("Y")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(plot_path, dpi=200)
+        plt.close()
+
+    # ───────────────────────────────
+    # Print results in console
+    # ───────────────────────────────
     print("\nPredictions:")
     for fname, lbl, p in results:
         print(f"{fname}\t→ {lbl} ({p:.3f})")
 
-    # 요약 PNG 저장 (클래스별 예측 개수)
-    out_png = os.path.join(script_dir, "prediction_summary.png")
-    plt.figure(figsize=(6, 4))
+    # ───────────────────────────────
+    # Save prediction log
+    # ───────────────────────────────
+    log_path = os.path.join(goal_dir, "predictions.txt")
+    with open(log_path, "w") as f:
+        for fname, lbl, p in results:
+            f.write(f"{fname}\t→ {lbl}\t({p:.4f})\n")
+    print(f"Saved prediction log → {log_path}")
+
+    # ───────────────────────────────
+    # Summary PNG
+    # ───────────────────────────────
+    out_summary = os.path.join(goal_dir, "prediction_summary.png")
+
+    plt.figure(figsize=(6,4))
     plt.bar(pred_counts.keys(), pred_counts.values())
     plt.title("Prediction Summary")
     plt.xlabel("Predicted Class")
     plt.ylabel("Count")
     plt.tight_layout()
-    plt.savefig(out_png, dpi=200)
+    plt.savefig(out_summary, dpi=200)
     plt.close()
 
-    print(f"\nSaved summary PNG → {out_png}")
+    print(f"Saved summary PNG → {out_summary}")
+
+    # ───────────────────────────────
+    # Confidence histogram
+    # ───────────────────────────────
+    out_hist = os.path.join(goal_dir, "confidence_hist.png")
+
+    plt.figure(figsize=(6,4))
+    plt.hist(confidences, bins=10, range=(0.97,1.0))
+    plt.title("Prediction Confidence Histogram")
+    plt.xlabel("Max Probability")
+    plt.ylabel("Count")
+    plt.tight_layout()
+    plt.savefig(out_hist, dpi=200)
+    plt.close()
+
+    print(f"Saved confidence histogram → {out_hist}")
 
 
 if __name__ == "__main__":
