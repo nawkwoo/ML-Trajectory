@@ -46,7 +46,7 @@ ML-Trajectory/
 | circle          | 1.00 | 1.00 | 1.00 |
 | diagonal_left   | 0.16 | 1.00 | 0.86 |
 | diagonal_right  | 0.16 | 0.86 | 1.00 |
-| horizontal      | 0.40 | 1.00 | 0.15 |
+| horizontal      | 1.00 | 0.15 | 0.40 |
 | vertical        | 0.40 | 0.15 | 1.00 |
 
 ---
@@ -62,7 +62,7 @@ pip install -r requirements.txt
 ### 2. Preprocessing
 
 ```bash
-python src/preprocess.py --dr-mode A --weight-scale 1.0
+python src/preprocess.py
 ```
 
 ### 3. Augmentation
